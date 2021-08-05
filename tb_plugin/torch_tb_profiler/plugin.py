@@ -97,6 +97,7 @@ class TorchProfilerPlugin(base_plugin.TBPlugin):
             "/distributed/waittime": self.comm_wait_route,
             "/distributed/commops": self.comm_ops_route,
             "/memory": self.memory_route,
+            "/carbon": self.carbon_emit
         }
 
     def frontend_metadata(self):
@@ -298,6 +299,21 @@ class TorchProfilerPlugin(base_plugin.TBPlugin):
         return werkzeug.Response(
             contents, content_type=mimetype, headers=TorchProfilerPlugin.headers
         )
+
+    @wrappers.Request.application
+    def carbon_emit(self, request):
+        profile = self._get_profile_for_request(request)
+        if not profile.gpu_infos:
+            raise exceptions.NotFound("404 Not Found any gpus")
+
+        gpus = list(profile.gpu_infos.values())
+        name = gpus[0]['Name']
+        carbon = utils.get_carbon_emit(name)
+        if carbon is None:
+            raise exceptions.NotFound("404 Not Found carbon in the dictionary")
+        else:
+            data = {"carbon": carbon}
+            return self.respond_as_json(data)
 
     @staticmethod
     def respond_as_json(obj):
