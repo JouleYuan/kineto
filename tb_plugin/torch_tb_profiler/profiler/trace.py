@@ -73,7 +73,7 @@ class KernelEvent(DurationEvent):
 class OperatorEvent(DurationEvent):
     def __init__(self, type, data):
         super().__init__(type, data)
-        self.callstack = self.args.get("Call stack", "")
+        self.callstack = self.args.get("Call stack")
         self.input_type = self.args.get("Input type")
 
         shape = self.args.get("Input Dims")

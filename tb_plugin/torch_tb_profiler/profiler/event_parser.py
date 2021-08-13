@@ -9,7 +9,7 @@ from typing import Dict, List
 from .. import utils
 from .communication import generate_communication_nodes
 from .node import (CommunicationNode, DeviceNode, OperatorNode,
-                   ProfilerStepNode, RuntimeNode)
+                   ProfilerStepNode, RuntimeNode, create_operator_node)
 from .range_utils import merge_ranges
 from .trace import EventTypes
 
@@ -72,6 +72,10 @@ class NodeParserMixin:
                 logger.warning("{} Runtime with external id {} don't correlate to any operator!".format(
                     len(externalid_to_runtime[ext_id]), ext_id))
 
+        if len(corrid_to_device) > 0:
+            corrids = ', '.join(str(x) for x in corrid_to_device.keys())
+            logger.warning("{} items doesn't belongs to any operators: {}".format(len(corrid_to_device), corrids))
+
         return tid2list, tid2zero_rt_list, corrid_to_device
 
     def _update_communication_node(self, event):
@@ -126,7 +130,7 @@ class NodeParserMixin:
             if event.type == EventTypes.PROFILER_STEP:
                 op_node = ProfilerStepNode.create(event)
             else:
-                op_node = OperatorNode.create(event)
+                op_node = create_operator_node(event)
             if event.name in NcclOpNameSet or event.name in GlooOpNameSet:
                 comm_node = CommunicationNode.create(event)
                 if event.name in NcclOpNameSet:

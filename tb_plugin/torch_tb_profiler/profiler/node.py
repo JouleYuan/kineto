@@ -4,6 +4,7 @@
 from abc import ABC
 from collections import defaultdict
 from enum import IntEnum
+from typing import List
 
 from .. import utils
 from .tensor_core import TC_OP_Whitelist
@@ -68,8 +69,8 @@ class OperatorNode(HostNode):
     def __init__(self, name, start_time, end_time, type, tid, external_id=None, device_duration=0,
             children=None, runtimes=None, input_shape=None, input_type=None, callstack=None, self_host_duration=0, self_device_duration=0):
         super().__init__(name, start_time, end_time, type, tid,  external_id, device_duration)
-        self.children = [] if children is None else children # OperatorNode and ProfilerStepNode.
-        self.runtimes = [] if runtimes is None else runtimes # RuntimeNode
+        self.children: List[OperatorNode] = [] if children is None else children # OperatorNode and ProfilerStepNode.
+        self.runtimes: List[RuntimeNode] = [] if runtimes is None else runtimes # RuntimeNode
         self.input_shape = input_shape
         self.input_type = input_type
         self.callstack = callstack
@@ -101,6 +102,8 @@ class OperatorNode(HostNode):
 
     def fill_stats(self):
         # TODO: Replace recursive by using a stack, in case of too deep callstack.
+        self.children.sort(key=lambda x: x.start_time)
+        self.runtimes.sort(key=lambda x: x.start_time)
         for child in self.children:
             child.fill_stats()
         for rt in self.runtimes:
@@ -145,6 +148,36 @@ class OperatorNode(HostNode):
 
         return ops, kernels
 
+    def get_device_start_time(self, cpu_time=True):
+        device_start = self.runtimes[0].device_start_time if self.runtimes else None
+        child_start = self.children[0].get_device_start_time(False) if self.children else None
+
+        if device_start is not None and child_start is not None:
+            return min(device_start, child_start)
+        elif device_start is not None:
+            return device_start
+        elif child_start is not None:
+            return child_start
+        elif cpu_time:
+            return self.start_time
+        else:
+            return None
+
+    def get_device_end_time(self, cpu_time=True):
+        device_end = self.runtimes[-1].device_end_time if self.runtimes else None
+        child_end = self.children[-1].get_device_end_time(False) if self.children else None
+
+        if device_end is not None and child_end is not None:
+            return max(device_end, child_end)
+        elif device_end is not None:
+            return device_end
+        elif child_end is not None:
+            return child_end
+        elif cpu_time:
+            return self.end_time
+        else:
+            return None
+
     @classmethod
     def create(cls, event):
         kwargs = BaseNode.get_node_argument(event)
@@ -156,13 +189,49 @@ class ProfilerStepNode(OperatorNode):
         super().__init__(**kwargs)
 
 
+class DataLoaderNode(OperatorNode):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class OptimizerNode(OperatorNode):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class BackwardNode(OperatorNode):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+# TODO: enable it when the Module trace is added
+# TODO: add backward node?
+class ModuleNode(OperatorNode):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.backward_node: BackwardNode = None
+
+
 class RuntimeNode(HostNode):
     def __init__(self, name, start_time, end_time, type, tid, external_id=None, device_duration=0,
             device_nodes=None):
         super().__init__(name, start_time, end_time, type, tid, external_id, device_duration)
         # One runtime could trigger more than one kernel, such as cudaLaunchCooperativeKernelMultiDevice.
-        self.device_nodes = device_nodes
+        self.device_nodes = sorted(device_nodes, key=lambda x: (x.start_time, -x.end_time)) if device_nodes else None
         self.tc_duration = 0  # Time summarization of all its launched kernels.
+
+    @property
+    def device_start_time(self):
+        if self.device_nodes:
+            return self.device_nodes[0].start_time
+        else:
+            return self.start_time
+
+    @property
+    def device_end_time(self):
+        if self.device_nodes:
+            return self.device_nodes[-1].end_time
+        else:
+            return self.end_time
 
     def fill_stats(self, op_node=None):
         if self.device_nodes:
@@ -208,10 +277,14 @@ class DeviceNode(BaseNode):
             kwargs["tc_used"] = event.tc_used
         return cls(**kwargs)
 
-def is_operator_node(node):
-    if type(node) is OperatorNode and node.type == EventTypes.OPERATOR \
-        and not (node.name.startswith("enumerate(DataLoader)#") and node.name.endswith(".__next__")) \
-        and not node.name.startswith("Optimizer."):
-        return True
+
+def create_operator_node(event):
+    if event.name.startswith("enumerate(DataLoader)#") and event.name.endswith(".__next__"):
+        return DataLoaderNode.create(event)
+    elif event.name.startswith("Optimizer."):
+        return OptimizerNode.create(event)
     else:
-        return False
+        return OperatorNode.create(event)
+
+def is_operator_node(node):
+    return bool(type(node) is OperatorNode and node.type == EventTypes.OPERATOR)

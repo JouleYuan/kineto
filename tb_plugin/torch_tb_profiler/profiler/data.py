@@ -45,6 +45,7 @@ class RunProfileData(object):
         self.gpu_utilization = None
         self.sm_efficiency = None
         self.occupancy = None
+        self.tid2tree = None
         self.gpu_util_buckets = None  # Cached here. Will be processed to json on first trace view.
         self.approximated_sm_efficiency_ranges = None  # Cached here. Will be processed to json on first trace view.
         self.blocks_per_sm_count = None
@@ -156,6 +157,7 @@ class RunProfileData(object):
     def process(self):
         parser = EventParser()
         tid2tree = parser.parse(self.events)
+        self.tid2tree = tid2tree
 
         self.has_runtime = parser.has_runtime
         self.has_kernel = parser.has_kernel
